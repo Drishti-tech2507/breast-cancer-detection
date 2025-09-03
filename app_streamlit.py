@@ -1,72 +1,95 @@
 import streamlit as st
+import pandas as pd
+import joblib
+import matplotlib.pyplot as plt
+from fpdf import FPDF
 
-# ---------------------- PAGE CONFIG ----------------------
-st.set_page_config(page_title="Breast Cancer Detection", page_icon="🩺", layout="wide")
+# Load trained model
+MODEL = joblib.load("breast_cancer_model.pkl")  
 
-# ---------------------- CSS ----------------------
-st.markdown("""
-    <style>
-    /* Background */
-    .stApp {
-        background: linear-gradient(135deg, #f8f9fa, #e3f2fd, #e8f5e9);
-        font-family: 'Poppins', sans-serif;
-    }
+st.title("🔬 Breast Cancer Detection & Dataset Analysis")
 
-    /* Navbar */
-    .navbar {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        background: #3949ab;
-        padding: 12px 30px;
-        border-radius: 12px;
-        margin-bottom: 20px;
-        color: white;
-    }
-    .navbar a {
-        text-decoration: none;
-        margin: 0 12px;
-        color: white;
-        font-weight: 500;
-    }
-    .navbar a:hover { color: #ffeb3b; }
+# =======================
+# Upload CSV Dataset
+# =======================
+st.sidebar.header("Upload Dataset (Optional)")
+uploaded_file = st.sidebar.file_uploader("Upload your CSV dataset", type=["csv"])
+df = None
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+    st.sidebar.success("Dataset loaded successfully!")
+    st.write("### Preview of uploaded dataset")
+    st.dataframe(df.head())
 
-    /* Card */
-    .card {
-        background: white;
-        padding: 25px;
-        border-radius: 15px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-        margin: 20px 0;
-        animation: slideUp 1s ease;
-    }
+    # Histogram selection
+    st.write("### Histogram of Selected Feature")
+    numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
+    selected_feature = st.selectbox("Select feature for histogram", numeric_cols)
+    if selected_feature:
+        fig, ax = plt.subplots()
+        df[selected_feature].hist(bins=20, ax=ax)
+        ax.set_xlabel(selected_feature)
+        ax.set_ylabel("Frequency")
+        st.pyplot(fig)
 
-    @keyframes slideUp {
-        from { transform: translateY(20px); opacity: 0; }
-        to { transform: translateY(0); opacity: 1; }
-    }
-    </style>
-""", unsafe_allow_html=True)
+# =======================
+# Input Features for Prediction
+# =======================
+st.sidebar.header("Input Features for Prediction")
 
-# ---------------------- NAVBAR ----------------------
-st.markdown("""
-<div class="navbar">
-    <div><b>🩺 CancerDetect</b></div>
-    <div>
-        <a href="#home">Home</a>
-        <a href="#predict">Prediction</a>
-        <a href="#about">About</a>
-    </div>
-    <div>
-        <a href="#profile">Profile</a>
-        <a href="#contact">Contact</a>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+# Define all 30 features expected by the model
+features = [
+    "mean radius", "mean texture", "mean perimeter", "mean area", "mean smoothness",
+    "mean compactness", "mean concavity", "mean concave points", "mean symmetry", "mean fractal dimension",
+    "radius error", "texture error", "perimeter error", "area error", "smoothness error",
+    "compactness error", "concavity error", "concave points error", "symmetry error", "fractal dimension error",
+    "worst radius", "worst texture", "worst perimeter", "worst area", "worst smoothness",
+    "worst compactness", "worst concavity", "worst concave points", "worst symmetry", "worst fractal dimension"
+]
 
-# ---------------------- CONTENT ----------------------
-st.markdown('<div class="card" id="home"> <h2>Welcome to Breast Cancer Detection</h2> <p>This app uses ML to predict whether a tumor is malignant or benign.</p> </div>', unsafe_allow_html=True)
+st.write("### Enter Feature Values for Prediction")
+input_data = {}
+for feat in features:
+    input_data[feat] = st.number_input(feat, min_value=0.0, value=1.0)
 
-st.markdown('<div class="card" id="predict"> <h2>🔮 Prediction Section</h2> <p>Here we will add ML inputs...</p> </div>', unsafe_allow_html=True)
+X = pd.DataFrame([input_data])
+expected_features = MODEL.n_features_in_
 
-st.markdown('<div class="card" id="about"> <h2>ℹ️ About</h2> <p>Built with Streamlit + Scikit-learn</p> </div>', unsafe_allow_html=True)
+if X.shape[1] > expected_features:
+    X = X.iloc[:, :expected_features]
+elif X.shape[1] < expected_features:
+    st.error(f"❌ Model expects {expected_features} features, but got {X.shape[1]}")
+    st.stop()
+
+# =======================
+# Prediction & PDF Report
+# =======================
+if st.button("Predict"):
+    prediction = MODEL.predict(X)[0]
+    result_text = "Benign" if prediction == 0 else "Malignant"
+    st.write(f"### Prediction Result: {result_text}")
+
+    # Generate PDF report
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, txt="Breast Cancer Prediction Report", ln=True, align='C')
+    pdf.ln(10)
+
+    pdf.cell(200, 10, txt=f"Prediction Result: {result_text}", ln=True)
+    pdf.ln(5)
+
+    pdf.cell(200, 10, txt="Input Feature Values:", ln=True)
+    for key, value in input_data.items():
+        pdf.cell(200, 8, txt=f"{key}: {value}", ln=True)
+
+    # ✅ Fix: convert bytearray to bytes (no .encode())
+    pdf_bytes = bytes(pdf.output(dest="S"))
+
+    # Download button
+    st.download_button(
+        label="📄 Download PDF Report",
+        data=pdf_bytes,
+        file_name="breast_cancer_report.pdf",
+        mime="application/pdf"
+    )
